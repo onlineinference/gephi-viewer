@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gephi (GEXF) Viewer</title>
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header { padding: 10px 14px; border-bottom: 1px solid rgba(128,128,128,.3); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  header label, header button, header select { font-size: 13px; }
+  #sigma { flex: 1; position: relative; }
+  #drop-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; color: #888; pointer-events: none; padding: 24px; }
+  #drop-hint.hidden { display: none; }
+  .drag-over #sigma { outline: 3px dashed #2741e7; outline-offset: -6px; }
+  #status { font-size: 12px; color: #888; }
+  .err { color: #c0392b; }
+  select, button { padding: 4px 8px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Gephi (GEXF) Viewer</h1>
+    <label>Open file: <input id="file" type="file" accept=".gexf,.xml" /></label>
+    <select id="remote" title="Files from the bucket" hidden></select>
+    <button id="fit">Fit</button>
+    <span class="spacer"></span>
+    <span id="status">Drop a .gexf file, or append ?gexf=&lt;url&gt;</span>
+  </header>
+  <div id="sigma">
+    <div id="drop-hint">Drag &amp; drop a Gephi <b>.gexf</b> export here<br/>— or pick one above —</div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "graphology": "https://cdn.jsdelivr.net/npm/graphology@0.25.4/+esm",
+    "graphology-gexf/browser": "https://cdn.jsdelivr.net/npm/graphology-gexf@0.13.1/+esm",
+    "graphology-layout-forceatlas2": "https://cdn.jsdelivr.net/npm/graphology-layout-forceatlas2@0.10.1/+esm",
+    "sigma": "https://cdn.jsdelivr.net/npm/sigma@3.0.0/+esm"
+  }
+}
+</script>
+
+<script type="module">
+  import Graph from "graphology";
+  import gexf from "graphology-gexf/browser";
+  import forceAtlas2 from "graphology-layout-forceatlas2";
+  import Sigma from "sigma";
+
+  const el = (id) => document.getElementById(id);
+  const statusEl = el("status");
+  const hint = el("drop-hint");
+  const container = el("sigma");
+  let renderer = null;
+
+  const setStatus = (msg, isErr = false) => { statusEl.textContent = msg; statusEl.className = isErr ? "err" : ""; };
+
+  // Palette used only when a node has no viz:color from Gephi.
+  const PALETTE = ["#2741e7","#e74c3c","#27ae60","#f39c12","#8e44ad","#16a085","#d35400","#2c3e50"];
+  const hashColor = (s) => PALETTE[Math.abs([...String(s)].reduce((a,c)=>a*31+c.charCodeAt(0)|0,7)) % PALETTE.length];
+
+  function renderGraph(graph) {
+    // Ensure every node has coords, size, color, label — re-creating Gephi's look where present,
+    // and falling back to ForceAtlas2 layout + defaults where the export omitted them.
+    let needsLayout = false;
+    graph.forEachNode((node, attr) => {
+      if (typeof attr.x !== "number" || typeof attr.y !== "number") {
+        needsLayout = true;
+        graph.setNodeAttribute(node, "x", Math.random());
+        graph.setNodeAttribute(node, "y", Math.random());
+      }
+      if (typeof attr.size !== "number") graph.setNodeAttribute(node, "size", 4);
+      if (!attr.color) graph.setNodeAttribute(node, "color", hashColor(node));
+      if (attr.label == null) graph.setNodeAttribute(node, "label", String(node));
+    });
+    graph.forEachEdge((edge, attr) => {
+      if (typeof attr.size !== "number") graph.setEdgeAttribute(edge, "size", attr.weight || 1);
+      if (!attr.color) graph.setEdgeAttribute(edge, "color", "rgba(140,140,140,0.35)");
+    });
+
+    if (needsLayout) {
+      // Only run layout when Gephi coordinates were absent.
+      const iters = Math.min(400, Math.max(80, Math.round(6000 / Math.max(1, graph.order))));
+      forceAtlas2.assign(graph, { iterations: iters, settings: forceAtlas2.inferSettings(graph) });
+    }
+
+    if (renderer) renderer.kill();
+    renderer = new Sigma(graph, container, {
+      renderLabels: true,
+      labelDensity: 0.3,
+      labelRenderedSizeThreshold: 6,
+      defaultEdgeColor: "rgba(140,140,140,0.35)",
+    });
+    // Hover: emphasize the node's neighborhood.
+    renderer.on("enterNode", ({ node }) => {
+      const neighbors = new Set(graph.neighbors(node)); neighbors.add(node);
+      renderer.setSetting("nodeReducer", (n, data) => neighbors.has(n) ? data : { ...data, color: "#dddddd", label: "" });
+      renderer.setSetting("edgeReducer", (e, data) =>
+        graph.extremities(e).some((x) => neighbors.has(x)) ? data : { ...data, hidden: true });
+    });
+    renderer.on("leaveNode", () => { renderer.setSetting("nodeReducer", null); renderer.setSetting("edgeReducer", null); });
+
+    hint.classList.add("hidden");
+    setStatus(`${graph.order} nodes · ${graph.size} edges${needsLayout ? " · layout: ForceAtlas2 (no coords in file)" : " · layout: from Gephi"}`);
+  }
+
+  function loadFromText(text, label) {
+    try {
+      const graph = gexf.parse(Graph, text, { addMissingNodes: true });
+      renderGraph(graph);
+      if (label) setStatus(`${label} — ${graph.order} nodes · ${graph.size} edges`);
+    } catch (e) {
+      console.error(e);
+      setStatus("Could not parse that file — is it a valid Gephi .gexf export? " + e.message, true);
+    }
+  }
+
+  // 1) File picker
+  el("file").addEventListener("change", (ev) => {
+    const f = ev.target.files[0]; if (!f) return;
+    setStatus(`Loading ${f.name}…`);
+    f.text().then((t) => loadFromText(t, f.name));
+  });
+
+  // 2) Drag & drop
+  const app = el("app");
+  ["dragenter","dragover"].forEach((t) => app.addEventListener(t, (e) => { e.preventDefault(); app.classList.add("drag-over"); }));
+  ["dragleave","drop"].forEach((t) => app.addEventListener(t, (e) => { e.preventDefault(); app.classList.remove("drag-over"); }));
+  app.addEventListener("drop", (e) => {
+    const f = e.dataTransfer.files[0]; if (!f) return;
+    setStatus(`Loading ${f.name}…`);
+    f.text().then((t) => loadFromText(t, f.name));
+  });
+
+  // 3) Fit / reset camera
+  el("fit").addEventListener("click", () => { if (renderer) renderer.getCamera().animatedReset(); });
+
+  // 4) Load from a URL (R2/bucket) via ?gexf=<url>
+  const params = new URLSearchParams(location.search);
+  const remoteUrl = params.get("gexf");
+  if (remoteUrl) {
+    setStatus(`Fetching ${remoteUrl}…`);
+    fetch(remoteUrl).then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.text(); })
+      .then((t) => loadFromText(t, remoteUrl))
+      .catch((e) => setStatus("Fetch failed: " + e.message + " (check the file URL / CORS)", true));
+  }
+
+  // 5) Optional: populate a dropdown from a bucket index (a Worker that returns JSON: [{name,url}]).
+  //    Set ?index=<url-to-json>. Left here so the deployed version can list R2 files.
+  const indexUrl = params.get("index");
+  if (indexUrl) {
+    fetch(indexUrl).then((r) => r.json()).then((items) => {
+      const sel = el("remote"); sel.hidden = false;
+      sel.innerHTML = '<option value="">— pick a file —</option>' +
+        items.map((i) => `<option value="${i.url}">${i.name}</option>`).join("");
+      sel.addEventListener("change", () => { if (sel.value) { setStatus("Fetching…"); fetch(sel.value).then((r)=>r.text()).then((t)=>loadFromText(t, sel.value)); } });
+    }).catch((e) => console.warn("index load failed", e));
+  }
+</script>
+</body>
+</html>

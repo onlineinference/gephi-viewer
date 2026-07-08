@@ -1,0 +1,7 @@
+name = "gephi-viewer-worker"
+main = "worker/index.js"
+compatibility_date = "2026-07-08"
+
+[[r2_buckets]]
+binding = "GEPHI"
+bucket_name = "gephi-files"
