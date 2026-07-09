@@ -493,6 +493,13 @@ function parseGexf(xmlText){
   if(doc.querySelector("parsererror")) throw new Error("not valid XML");
   const nodeEls=[...doc.getElementsByTagName("node")];
   if(!nodeEls.length) throw new Error("no <node> elements found");
+  // Map each attribute definition id -> its title, so attvalues that reference
+  // an attribute by numeric id (standard GEXF) resolve to the right field.
+  const attrTitle={};
+  for(const a of doc.getElementsByTagName("attribute")){
+    const id=a.getAttribute("id"); const title=a.getAttribute("title");
+    if(id!=null) attrTitle[id]=(title||id).toLowerCase();
+  }
   const idToIdx=new Map();
   const nodes=nodeEls.map((el,i)=>{
     const raw=el.getAttribute("id"); idToIdx.set(raw,i);
@@ -500,7 +507,8 @@ function parseGexf(xmlText){
     // pull the `category` and `referring domains` attributes if present
     let cat=null, ref=0;
     for(const av of el.getElementsByTagName("attvalue")){
-      const f=(av.getAttribute("for")||av.getAttribute("id")||"").toLowerCase();
+      const ref0=(av.getAttribute("for")||av.getAttribute("id")||"");
+      const f=(attrTitle[ref0]||ref0).toLowerCase();
       const v=av.getAttribute("value");
       if(f==="category"){ const c=parseInt(parseFloat(v),10); if(!isNaN(c)) cat=c; }
       else if(f==="referring domains"){ const r=parseFloat(v); if(!isNaN(r)) ref=r; }
