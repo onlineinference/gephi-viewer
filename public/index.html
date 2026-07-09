@@ -209,6 +209,9 @@ function buildModel(){
 buildModel();
 
 // ---- view transform ----
+// MIN_ZOOM is deliberately tiny so very large / widely-spread graphs can be
+// zoomed all the way out to fit on screen; MAX_ZOOM caps the close-up.
+const MIN_ZOOM=0.02, MAX_ZOOM=6;
 let view={x:W/2,y:H/2,k:0.85};
 function toScreen(p){return {x:p.x*view.k+view.x, y:p.y*view.k+view.y};}
 function fitView(pad=90){
@@ -216,7 +219,7 @@ function fitView(pad=90){
   let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9;
   for(const n of vis){ minX=Math.min(minX,n.x); maxX=Math.max(maxX,n.x); minY=Math.min(minY,n.y); maxY=Math.max(maxY,n.y); }
   const gw=maxX-minX||1, gh=maxY-minY||1;
-  const k=Math.max(.15,Math.min(4, Math.min((W-2*pad)/gw,(H-2*pad)/gh)));
+  const k=Math.max(MIN_ZOOM,Math.min(4, Math.min((W-2*pad)/gw,(H-2*pad)/gh)));
   view.k=k; view.x=W/2-(minX+maxX)/2*k; view.y=H/2-(minY+maxY)/2*k;
 }
 let didFit=false;
@@ -399,7 +402,7 @@ addEventListener('mouseup',e=>{
   drag=null; dragging=false; panStart=null; cv.classList.remove('grabbing'); });
 cv.addEventListener('wheel',e=>{ e.preventDefault();
   const f=Math.exp(-e.deltaY*0.0012), mx=e.clientX,my=e.clientY;
-  view.x=mx-(mx-view.x)*f; view.y=my-(my-view.y)*f; view.k=Math.max(.15,Math.min(6,view.k*f));
+  view.x=mx-(mx-view.x)*f; view.y=my-(my-view.y)*f; view.k=Math.max(MIN_ZOOM,Math.min(MAX_ZOOM,view.k*f));
 },{passive:false});
 
 // ---- controls ----
