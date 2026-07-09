@@ -56,11 +56,46 @@
   /* Legend */
   .legend{position:fixed;right:20px;top:96px;width:210px;background:var(--panel);border:1px solid var(--line);
     border-radius:12px;padding:14px;backdrop-filter:blur(10px);z-index:6;max-height:calc(100vh - 150px);overflow:auto}
-  .leg-row{display:flex;align-items:center;gap:9px;padding:4px 5px;border-radius:6px;cursor:pointer;color:var(--ink-dim);font-size:12.5px}
+  .leg-row{display:flex;align-items:center;gap:7px;padding:3px 4px;border-radius:6px;color:var(--ink-dim);font-size:12.5px}
   .leg-row:hover{background:rgba(255,255,255,.04);color:var(--ink)}
   .leg-row.off{opacity:.32}
   .dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 6px rgba(0,0,0,.4)}
   .leg-row .ct{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
+  .leg-row .iso{background:none;border:none;color:var(--ink-faint);cursor:pointer;padding:0;font-size:12px;flex:0 0 auto;line-height:1}
+  .leg-row .iso:hover{color:var(--accent)}
+  .leg-row.solo .iso{color:var(--accent)}
+  .leg-row .cin{width:13px;height:13px;padding:0;border:none;background:none;flex:0 0 auto;cursor:pointer}
+  .leg-row .cin::-webkit-color-swatch-wrapper{padding:0}
+  .leg-row .cin::-webkit-color-swatch{border:none;border-radius:50%;box-shadow:0 0 6px rgba(0,0,0,.4)}
+  .leg-row .cin::-moz-color-swatch{border:none;border-radius:50%}
+  .leg-row .name{background:none;border:none;color:inherit;font:inherit;flex:1;min-width:0;padding:1px 3px;border-radius:4px}
+  .leg-row .name:hover{background:rgba(255,255,255,.05)}
+  .leg-row .name:focus{outline:none;background:rgba(255,255,255,.09);color:var(--ink)}
+
+  /* Category editor modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(5,9,14,.62);backdrop-filter:blur(3px);z-index:30;display:none}
+  .modal-bg.show{display:block}
+  .modal{position:fixed;z-index:31;left:50%;top:50%;transform:translate(-50%,-50%);width:min(680px,92vw);
+    max-height:82vh;background:var(--bg2);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 24px 60px rgba(0,0,0,.5);display:none;flex-direction:column;overflow:hidden}
+  .modal.show{display:flex}
+  .modal header{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .modal header h2{font-size:14px;margin:0;font-weight:600}
+  .modal .x{margin-left:auto;cursor:pointer;color:var(--ink-faint);font-size:20px;line-height:1;background:none;border:none}
+  .modal .x:hover{color:var(--ink)}
+  .modal .tools{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);align-items:center;flex-wrap:wrap}
+  .mini{background:#0b121a;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 10px;font-family:var(--mono);font-size:12px}
+  .mini:focus{outline:none;border-color:var(--accent)}
+  .modal .body{overflow:auto;padding:4px 8px 10px}
+  .ctbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .ctbl th{position:sticky;top:0;background:var(--bg2);text-align:left;font-family:var(--mono);font-size:10px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--ink-faint);padding:7px 8px;border-bottom:1px solid var(--line);z-index:1}
+  .ctbl td{padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.05);color:var(--ink-dim);
+    max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ctbl tr:hover td{background:rgba(255,255,255,.03);color:var(--ink)}
+  .ctbl .catsel{width:100%;background:#0b121a;border:1px solid var(--line);color:var(--ink);border-radius:6px;
+    padding:3px 6px;font-family:var(--mono);font-size:11px}
+  .ctbl .catsel:focus{outline:none;border-color:var(--accent)}
 
   /* Tooltip */
   #tip{position:fixed;pointer-events:none;z-index:20;background:#0b121aee;border:1px solid var(--accent);
@@ -109,6 +144,11 @@
     <div class="hint" id="sizeHint">hubs emphasised by in-links</div>
   </div>
   <div class="grp">
+    <div class="lbl">Categories</div>
+    <button class="btn" id="editCats">▦  Edit node categories…</button>
+    <div class="hint">rename &amp; recolour sections in the legend →</div>
+  </div>
+  <div class="grp">
     <div class="lbl">View</div>
     <button class="btn" id="pause">⏸  Pause layout</button>
     <button class="btn" id="restart">↻  Re-run layout</button>
@@ -118,10 +158,28 @@
 </div>
 
 <div class="legend" id="legend">
-  <div class="lbl">Site section &nbsp;·&nbsp; click to isolate</div>
+  <div class="lbl">Sections &nbsp;·&nbsp; ◎ isolate · rename · recolour</div>
 </div>
 
 <div id="tip"><div class="p"></div><div class="m"></div></div>
+
+<div class="modal-bg" id="catBg"></div>
+<div class="modal" id="catModal" role="dialog" aria-label="Edit node categories">
+  <header>
+    <h2>Edit node categories</h2>
+    <button class="x" id="catClose" title="Close">×</button>
+  </header>
+  <div class="tools">
+    <input class="mini" id="catSearch" placeholder="filter by path… e.g. battery" autocomplete="off" style="flex:1">
+    <button class="btn" id="catAdd" style="width:auto;margin:0;white-space:nowrap">＋ New category</button>
+  </div>
+  <div class="body">
+    <table class="ctbl">
+      <thead><tr><th>Page</th><th style="width:200px">Category</th></tr></thead>
+      <tbody id="catRows"></tbody>
+    </table>
+  </div>
+</div>
 <div class="foot">Colour = category · size = in-links or referring domains (toggle in panel)<br><b>Drag</b> nodes · <b>scroll</b> zoom · <b>drag bg</b> pan · <b>hover</b> to trace<br><a href="./viewer.html" style="color:var(--accent);text-decoration:none;">Basic light viewer →</a></div>
 
 <script>
@@ -177,22 +235,40 @@ const CATEGORIES = {
 const UNCATEGORISED = {name:"Uncategorised", color:"#8d99ae"};
 const AUTO_COLORS = ["#8cb900","#d97dd8","#23966f","#00c7ff","#ff7045","#f4a259","#a0c4ff","#ff6b6b","#06d6a0","#bdb2ff"];
 function autoColor(c){ return AUTO_COLORS[Math.abs(c|0)%AUTO_COLORS.length]; }
+
+// User edits from the dashboard live here, keyed by a stable group id
+// ("cat:<n>" for a category, "sec:<name>" for a URL-derived section) so a
+// rename never breaks isolation or a colour override.
+const labelOverride = {}, colorOverride = {};
+function groupKey(n){ return n.cat!=null ? ("cat:"+n.cat) : ("sec:"+deriveSection(n.path)); }
 function groupOf(n){
+  const k=groupKey(n);
+  if(labelOverride[k]!=null) return labelOverride[k];
   if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].name : ("Category "+n.cat);
   return deriveSection(n.path);
 }
 function colorOf(n){
-  if(n.color) return n.color;                                    // colour from the uploaded file itself
+  const k=groupKey(n);
+  if(colorOverride[k]!=null) return colorOverride[k];                 // colour set in the dashboard
+  if(n.color) return n.color;                                        // colour from the uploaded file itself
   if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].color : autoColor(n.cat);
   return SECTIONS[deriveSection(n.path)] || UNCATEGORISED.color;
 }
+// small helpers for the colour <input> (which only speaks hex)
+function toHex(c){
+  if(!c) return "#8d99ae";
+  if(c[0]==="#") return c.length===4 ? "#"+[...c.slice(1)].map(x=>x+x).join("") : c.slice(0,7);
+  const m=c.match(/rgba?\(([^)]+)\)/); if(!m) return "#8d99ae";
+  const [r,g,b]=m[1].split(",").map(v=>Math.max(0,Math.min(255,parseInt(v,10)||0)));
+  return "#"+[r,g,b].map(v=>v.toString(16).padStart(2,"0")).join("");
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 // ---- build model (rebuilt when new data is loaded) ----
 let N=[], L=[], nbr=[], orphanCount=0, groupColor={};
 function buildModel(){
   N = GRAPH.nodes.map(n=>{
-    const section = groupOf(n);
-    return { ...n, section,
+    return { ...n, gkey:groupKey(n), section:groupOf(n),
       x:(Math.random()-.5)*800, y:(Math.random()-.5)*800,
       dx:0, dy:0, odx:0, ody:0, pinned:false,
       mass: 1 + n.inDeg + n.outDeg,                     // FA2 degree mass
@@ -204,6 +280,11 @@ function buildModel(){
   nbr = N.map(()=>new Set());
   L.forEach(l=>{ nbr[l.s.id].add(l.t.id); nbr[l.t.id].add(l.s.id); });
   orphanCount = N.filter(n=>n.inDeg===0).length;
+  groupColor = {}; N.forEach(n=>{ if(!(n.section in groupColor)) groupColor[n.section]=n.col; });
+}
+// Recompute each node's group/colour in place (no layout reset) after an edit.
+function refreshGroups(){
+  N.forEach(n=>{ n.gkey=groupKey(n); n.section=groupOf(n); n.col=colorOf(n); });
   groupColor = {}; N.forEach(n=>{ if(!(n.section in groupColor)) groupColor[n.section]=n.col; });
 }
 buildModel();
@@ -290,13 +371,13 @@ function tick(){
 }
 
 // ---- interaction state ----
-let hover=null, hidden=new Set(), soloSection=null, query="", orphanMode=false;
+let hover=null, hidden=new Set(), soloKey=null, query="", orphanMode=false;
 const opt={edges:true,labels:false,hublabels:true,arrows:true};
 
 function visible(n){
   if(orphanMode && n.inDeg>0) return false;
-  if(hidden.has(n.section)) return false;
-  if(soloSection && n.section!==soloSection) return false;
+  if(hidden.has(n.gkey)) return false;
+  if(soloKey && n.gkey!==soloKey) return false;
   return true;
 }
 function isHubLabel(n){ return n.inDeg>=90; }
@@ -429,7 +510,7 @@ function updatePauseBtn(){
 pauseBtn.onclick=()=>{ if(running){ running=false; } else { wake(); } updatePauseBtn(); };
 updatePauseBtn();
 document.getElementById('restart').onclick=()=>{ N.forEach(n=>{n.pinned=false}); fa2speed=1; fa2speedEff=1; wake(); updatePauseBtn(); };
-document.getElementById('reset').onclick=()=>{ soloSection=null; hidden.clear(); syncLegend(); fitView(); requestDraw(); };
+document.getElementById('reset').onclick=()=>{ soloKey=null; hidden.clear(); syncLegend(); fitView(); requestDraw(); };
 const orphansBtn=document.getElementById('orphans');
 function updateOrphanBtn(){
   orphansBtn.textContent = orphanMode ? "◎  Show all pages" : `◎  Show ${orphanCount} orphan pages`;
@@ -437,7 +518,7 @@ function updateOrphanBtn(){
 }
 orphansBtn.onclick=()=>{
   orphanMode=!orphanMode;
-  if(orphanMode){ soloSection=null; hidden.clear(); syncLegend(); query=""; document.getElementById('search').value=""; hover=null; }
+  if(orphanMode){ soloKey=null; hidden.clear(); syncLegend(); query=""; document.getElementById('search').value=""; hover=null; }
   updateOrphanBtn();
   wake();
 };
@@ -449,20 +530,45 @@ let legRows={};
 function buildLegend(){
   legend.querySelectorAll('.leg-row').forEach(r=>r.remove());
   legRows={};
-  const counts={}; N.forEach(n=>counts[n.section]=(counts[n.section]||0)+1);
-  Object.keys(counts).sort((a,b)=>counts[b]-counts[a]).forEach(sec=>{
+  // group by stable key so rename/colour edits stay attached to the right group
+  const groups={};
+  N.forEach(n=>{
+    if(!groups[n.gkey]) groups[n.gkey]={key:n.gkey, label:n.section, color:n.col, count:0};
+    groups[n.gkey].count++;
+  });
+  Object.values(groups).sort((a,b)=>b.count-a.count).forEach(g=>{
     const row=document.createElement('div'); row.className='leg-row';
-    row.innerHTML=`<span class="dot" style="background:${groupColor[sec]||UNCATEGORISED.color}"></span><span>${sec}</span><span class="ct">${counts[sec]}</span>`;
-    row.onclick=()=>{
+
+    const iso=document.createElement('button'); iso.className='iso'; iso.textContent='◎'; iso.title='Isolate this section';
+    iso.onclick=()=>{
       if(orphanMode){orphanMode=false;updateOrphanBtn();}
-      soloSection = (soloSection===sec)? null : sec;
+      soloKey = (soloKey===g.key)? null : g.key;
       hidden.clear(); syncLegend(); wake();
     };
-    legend.appendChild(row); legRows[sec]=row;
+
+    const cin=document.createElement('input'); cin.type='color'; cin.className='cin';
+    cin.value=toHex(g.color); cin.title='Change colour';
+    cin.oninput=()=>{ colorOverride[g.key]=cin.value; refreshGroups(); requestDraw(); };
+
+    const name=document.createElement('input'); name.className='name'; name.value=g.label; name.title='Rename section';
+    const commit=()=>{ const v=name.value.trim();
+      if(v) labelOverride[g.key]=v; else delete labelOverride[g.key];
+      refreshGroups(); requestDraw(); };
+    name.onchange=commit;
+    name.onkeydown=e=>{ if(e.key==='Enter') name.blur(); };
+
+    const ct=document.createElement('span'); ct.className='ct'; ct.textContent=g.count;
+
+    row.append(iso,cin,name,ct);
+    legend.appendChild(row); legRows[g.key]=row;
   });
+  syncLegend();
 }
 function syncLegend(){
-  for(const sec in legRows){ legRows[sec].classList.toggle('off', soloSection && soloSection!==sec); }
+  for(const k in legRows){
+    legRows[k].classList.toggle('off', soloKey && soloKey!==k);
+    legRows[k].classList.toggle('solo', soloKey===k);
+  }
 }
 buildLegend();
 
@@ -480,7 +586,7 @@ updateStats();
 function loadGraph(graph){
   GRAPH = graph;
   buildModel();
-  soloSection=null; hidden.clear(); orphanMode=false; hover=null;
+  soloKey=null; hidden.clear(); orphanMode=false; hover=null;
   query=""; document.getElementById('search').value="";
   tip.style.opacity=0;
   fa2speed=1; fa2speedEff=1; running=true; settle=0;
@@ -557,6 +663,63 @@ function handleFile(file){
 document.getElementById('gexf').addEventListener('change',e=>handleFile(e.target.files[0]));
 addEventListener('dragover',e=>{ e.preventDefault(); });
 addEventListener('drop',e=>{ e.preventDefault(); if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
+
+// ---- category editor (edit each page's category in a table) ----
+const catBg=document.getElementById('catBg'), catModal=document.getElementById('catModal');
+const catRows=document.getElementById('catRows'), catSearch=document.getElementById('catSearch');
+let catFilter="";
+// the list of categories offered in every dropdown
+function catList(){
+  const cats=new Set();
+  N.forEach(n=>{ if(n.cat!=null) cats.add(n.cat); });
+  Object.keys(CATEGORIES).forEach(k=>cats.add(+k));
+  Object.keys(labelOverride).forEach(k=>{ if(k.startsWith("cat:")) cats.add(+k.slice(4)); });
+  return [...cats].filter(c=>!isNaN(c)).sort((a,b)=>a-b);
+}
+function catName(c){ return labelOverride["cat:"+c] || (CATEGORIES[c]?CATEGORIES[c].name:("Category "+c)); }
+function catOptionsHtml(){
+  let html=`<option value="">— Uncategorised —</option>`;
+  catList().forEach(c=>{ html+=`<option value="${c}">${escapeHtml(catName(c))}</option>`; });
+  return html;
+}
+function renderCatTable(){
+  const q=catFilter.trim().toLowerCase();
+  const rows=N.filter(n=>!q||n.path.toLowerCase().includes(q));
+  const cap=500, opts=catOptionsHtml();
+  catRows.innerHTML="";
+  rows.slice(0,cap).forEach(n=>{
+    const tr=document.createElement('tr');
+    const td1=document.createElement('td'); td1.textContent=n.path; td1.title=n.path;
+    const td2=document.createElement('td');
+    const sel=document.createElement('select'); sel.className='catsel'; sel.innerHTML=opts;
+    sel.value = n.cat!=null ? String(n.cat) : "";
+    sel.onchange=()=>{
+      n.cat = sel.value==="" ? null : parseInt(sel.value,10);
+      if(GRAPH.nodes[n.id]) GRAPH.nodes[n.id].cat = n.cat;   // keep source in sync
+      refreshGroups(); buildLegend(); requestDraw();
+    };
+    td2.appendChild(sel); tr.append(td1,td2); catRows.appendChild(tr);
+  });
+  if(rows.length>cap){
+    const tr=document.createElement('tr'), td=document.createElement('td');
+    td.colSpan=2; td.style.cssText="color:var(--ink-faint);font-family:var(--mono);font-size:11px;padding:8px;white-space:normal";
+    td.textContent=`Showing first ${cap} of ${rows.length} pages — refine the filter to narrow it down.`;
+    tr.appendChild(td); catRows.appendChild(tr);
+  }
+}
+function openCats(){ catFilter=""; catSearch.value=""; renderCatTable(); catBg.classList.add('show'); catModal.classList.add('show'); }
+function closeCats(){ catBg.classList.remove('show'); catModal.classList.remove('show'); }
+document.getElementById('editCats').onclick=openCats;
+document.getElementById('catClose').onclick=closeCats;
+catBg.onclick=closeCats;
+catSearch.addEventListener('input',e=>{ catFilter=e.target.value; renderCatTable(); });
+document.getElementById('catAdd').onclick=()=>{
+  const name=prompt("Name for the new category:"); if(!name||!name.trim()) return;
+  const nums=catList(); const next=(nums.length?Math.max(...nums):0)+1;
+  labelOverride["cat:"+next]=name.trim();
+  renderCatTable();                     // the new category is now selectable
+};
+addEventListener('keydown',e=>{ if(e.key==="Escape" && catModal.classList.contains('show')) closeCats(); });
 </script>
 </body>
 </html>
