@@ -100,6 +100,7 @@
   /* Tooltip */
   #tip{position:fixed;pointer-events:none;z-index:20;background:#0b121aee;border:1px solid var(--accent);
     border-radius:9px;padding:9px 11px;max-width:320px;opacity:0;transition:opacity .08s;font-size:12px}
+  #tip .d{font-family:var(--mono);font-size:10.5px;color:var(--accent);letter-spacing:.04em;margin-bottom:2px;word-break:break-all}
   #tip .p{font-family:var(--mono);color:var(--ink);word-break:break-all;line-height:1.35}
   #tip .m{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);margin-top:5px;display:flex;gap:12px}
   #tip .m b{color:var(--accent);font-weight:600}
@@ -161,7 +162,7 @@
   <div class="lbl">Sections &nbsp;·&nbsp; ◎ isolate · rename · recolour</div>
 </div>
 
-<div id="tip"><div class="p"></div><div class="m"></div></div>
+<div id="tip"><div class="d"></div><div class="p"></div><div class="m"></div></div>
 
 <div class="modal-bg" id="catBg"></div>
 <div class="modal" id="catModal" role="dialog" aria-label="Edit node categories">
@@ -475,7 +476,9 @@ cv.addEventListener('mousemove',e=>{
   if(panStart){ moved=true; view.x=panStart.vx+(mx-panStart.mx); view.y=panStart.vy+(my-panStart.my); return; }
   const h=pick(mx,my);
   if(h!==hover){ hover=h;
-    if(h){ tip.style.opacity=1; tip.querySelector('.p').textContent=h.path;
+    if(h){ tip.style.opacity=1;
+      tip.querySelector('.d').textContent = h.host || (GRAPH.meta&&GRAPH.meta.site) || "";
+      tip.querySelector('.p').textContent=h.path;
       tip.querySelector('.m').innerHTML=`<span><b>${h.inDeg}</b> in</span><span><b>${h.outDeg}</b> out</span><span><b>${h.ref||0}</b> ref.dom</span><span>${h.section}</span>`;
     } else tip.style.opacity=0; }
   if(h){ tip.style.left=Math.min(mx+14,innerWidth-330)+'px'; tip.style.top=(my+16)+'px'; }
@@ -622,7 +625,7 @@ function parseGexf(xmlText){
   const idToIdx=new Map();
   const nodes=nodeEls.map((el,i)=>{
     const raw=el.getAttribute("id"); idToIdx.set(raw,i);
-    let path=raw; try{ path=new URL(raw).pathname||"/"; }catch(_){}
+    let path=raw, host=""; try{ const u=new URL(raw); path=u.pathname||"/"; host=u.hostname; }catch(_){}
     // pull the `category` and `referring domains` attributes if present
     let cat=null, ref=0;
     for(const av of el.getElementsByTagName("attvalue")){
@@ -638,7 +641,7 @@ function parseGexf(xmlText){
     const cEl=el.getElementsByTagNameNS("*","color")[0];
     if(cEl){ const r=cEl.getAttribute("r"),g=cEl.getAttribute("g"),b=cEl.getAttribute("b");
       if(r!=null&&g!=null&&b!=null) color=`rgb(${+r},${+g},${+b})`; }
-    return { id:i, path, cat, ref, color, inDeg:0, outDeg:0, inW:0 };
+    return { id:i, path, host, cat, ref, color, inDeg:0, outDeg:0, inW:0 };
   });
   const links=[]; let selfLoops=0;
   for(const el of doc.getElementsByTagName("edge")){
