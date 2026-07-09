@@ -110,6 +110,7 @@
   </div>
   <div class="grp">
     <div class="lbl">View</div>
+    <button class="btn" id="pause">⏸  Pause layout</button>
     <button class="btn" id="restart">↻  Re-run layout</button>
     <button class="btn" id="reset">⤢  Reset view</button>
     <button class="btn" id="orphans">◎  Show 44 orphan pages</button>
@@ -135,8 +136,15 @@ const SECTIONS = {
 const cv = document.getElementById('stage'), ctx = cv.getContext('2d');
 const tip = document.getElementById('tip');
 let W,H,DPR;
+// Only repaint when something actually changed (layout tick or user input).
+// When the graph has settled and nothing is happening, the canvas stays idle,
+// which keeps CPU near zero even for large graphs.
+let needsDraw=true;
+function requestDraw(){ needsDraw=true; }
+['mousemove','mousedown','mouseup','wheel','click','input','change','keydown','touchstart','touchmove']
+  .forEach(ev=>addEventListener(ev,requestDraw,true));
 function resize(){ DPR=Math.min(2,devicePixelRatio||1); W=innerWidth; H=innerHeight;
-  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px'; ctx.setTransform(DPR,0,0,DPR,0,0);}
+  cv.width=W*DPR; cv.height=H*DPR; cv.style.width=W+'px'; cv.style.height=H+'px'; ctx.setTransform(DPR,0,0,DPR,0,0); requestDraw();}
 addEventListener('resize',resize); resize();
 
 // ---- URL → site section rules (edit to recategorise) ----
@@ -167,12 +175,15 @@ const CATEGORIES = {
   5:{name:"Press / News",        color:"#ff7045"}
 };
 const UNCATEGORISED = {name:"Uncategorised", color:"#8d99ae"};
+const AUTO_COLORS = ["#8cb900","#d97dd8","#23966f","#00c7ff","#ff7045","#f4a259","#a0c4ff","#ff6b6b","#06d6a0","#bdb2ff"];
+function autoColor(c){ return AUTO_COLORS[Math.abs(c|0)%AUTO_COLORS.length]; }
 function groupOf(n){
-  if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].name : UNCATEGORISED.name;
+  if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].name : ("Category "+n.cat);
   return deriveSection(n.path);
 }
 function colorOf(n){
-  if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].color : UNCATEGORISED.color;
+  if(n.color) return n.color;                                    // colour from the uploaded file itself
+  if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].color : autoColor(n.cat);
   return SECTIONS[deriveSection(n.path)] || UNCATEGORISED.color;
 }
 
@@ -345,8 +356,18 @@ function draw(){
   }
 }
 let frames=0;
-let fitFrame=90;
-function loop(){ if(running){ tick(); frames++; if(!didFit && (frames>=fitFrame || !running)){ fitView(); didFit=true; } } draw(); requestAnimationFrame(loop); }
+let fitFrame=90, prevRunning=true;
+const MAX_LAYOUT_FRAMES=1500; // hard stop so big graphs can't spin the CPU forever
+function loop(){
+  if(running){
+    tick(); frames++; needsDraw=true;
+    if(!didFit && (frames>=fitFrame || !running)){ fitView(); didFit=true; }
+    if(frames>=MAX_LAYOUT_FRAMES) running=false;
+  }
+  if(running!==prevRunning){ prevRunning=running; if(typeof updatePauseBtn==="function") updatePauseBtn(); }
+  if(needsDraw){ draw(); needsDraw=false; }
+  requestAnimationFrame(loop);
+}
 loop();
 
 // ---- pick ----
@@ -397,8 +418,15 @@ document.getElementById('sizeScale').addEventListener('input',e=>{ sizeScale=+e.
 document.getElementById('sizeContrast').addEventListener('input',e=>{ sizeContrast=+e.target.value; updSizeHint(); });
 document.getElementById('sizeMetric').addEventListener('change',e=>{ sizeMetric=e.target.value; updSizeHint(); });
 updSizeHint();
-document.getElementById('restart').onclick=()=>{ N.forEach(n=>{n.pinned=false}); fa2speed=1; fa2speedEff=1; wake(); };
-document.getElementById('reset').onclick=()=>{ soloSection=null; hidden.clear(); syncLegend(); fitView(); };
+const pauseBtn=document.getElementById('pause');
+function updatePauseBtn(){
+  pauseBtn.textContent = running ? "⏸  Pause layout" : "▶  Resume layout";
+  pauseBtn.style.color = running ? "" : "var(--accent)";
+}
+pauseBtn.onclick=()=>{ if(running){ running=false; } else { wake(); } updatePauseBtn(); };
+updatePauseBtn();
+document.getElementById('restart').onclick=()=>{ N.forEach(n=>{n.pinned=false}); fa2speed=1; fa2speedEff=1; wake(); updatePauseBtn(); };
+document.getElementById('reset').onclick=()=>{ soloSection=null; hidden.clear(); syncLegend(); fitView(); requestDraw(); };
 const orphansBtn=document.getElementById('orphans');
 function updateOrphanBtn(){
   orphansBtn.textContent = orphanMode ? "◎  Show all pages" : `◎  Show ${orphanCount} orphan pages`;
@@ -454,7 +482,7 @@ function loadGraph(graph){
   tip.style.opacity=0;
   fa2speed=1; fa2speedEff=1; running=true; settle=0;
   didFit=false; frames=0; fitFrame=90;
-  buildLegend(); syncLegend(); updateOrphanBtn(); updateStats(); updSizeHint();
+  buildLegend(); syncLegend(); updateOrphanBtn(); updateStats(); updSizeHint(); updatePauseBtn(); requestDraw();
 }
 
 // GEXF is XML — parse it natively (no external libs), then map it onto the
@@ -477,7 +505,13 @@ function parseGexf(xmlText){
       if(f==="category"){ const c=parseInt(parseFloat(v),10); if(!isNaN(c)) cat=c; }
       else if(f==="referring domains"){ const r=parseFloat(v); if(!isNaN(r)) ref=r; }
     }
-    return { id:i, path, cat, ref, inDeg:0, outDeg:0, inW:0 };
+    // use the node's own Gephi colour (viz:color) when present, so a new file
+    // brings its own palette instead of the built-in one
+    let color=null;
+    const cEl=el.getElementsByTagNameNS("*","color")[0];
+    if(cEl){ const r=cEl.getAttribute("r"),g=cEl.getAttribute("g"),b=cEl.getAttribute("b");
+      if(r!=null&&g!=null&&b!=null) color=`rgb(${+r},${+g},${+b})`; }
+    return { id:i, path, cat, ref, color, inDeg:0, outDeg:0, inW:0 };
   });
   const links=[]; let selfLoops=0;
   for(const el of doc.getElementsByTagName("edge")){
