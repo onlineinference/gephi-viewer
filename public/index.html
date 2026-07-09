@@ -240,18 +240,23 @@ function autoColor(c){ return AUTO_COLORS[Math.abs(c|0)%AUTO_COLORS.length]; }
 // ("cat:<n>" for a category, "sec:<name>" for a URL-derived section) so a
 // rename never breaks isolation or a colour override.
 const labelOverride = {}, colorOverride = {};
+// The built-in CATEGORIES names/colours describe ONLY the bundled demo data.
+// Category numbers mean different things on every site, so once a file is
+// uploaded we stop presuming — categories become "Category N" (rename them in
+// the legend) and colours come from the file itself.
+let builtinData = true;
 function groupKey(n){ return n.cat!=null ? ("cat:"+n.cat) : ("sec:"+deriveSection(n.path)); }
 function groupOf(n){
   const k=groupKey(n);
   if(labelOverride[k]!=null) return labelOverride[k];
-  if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].name : ("Category "+n.cat);
+  if(n.cat!=null) return (builtinData && CATEGORIES[n.cat]) ? CATEGORIES[n.cat].name : ("Category "+n.cat);
   return deriveSection(n.path);
 }
 function colorOf(n){
   const k=groupKey(n);
   if(colorOverride[k]!=null) return colorOverride[k];                 // colour set in the dashboard
   if(n.color) return n.color;                                        // colour from the uploaded file itself
-  if(n.cat!=null) return CATEGORIES[n.cat] ? CATEGORIES[n.cat].color : autoColor(n.cat);
+  if(n.cat!=null) return (builtinData && CATEGORIES[n.cat]) ? CATEGORIES[n.cat].color : autoColor(n.cat);
   return SECTIONS[deriveSection(n.path)] || UNCATEGORISED.color;
 }
 // small helpers for the colour <input> (which only speaks hex)
@@ -585,6 +590,11 @@ updateStats();
 // ---- load a new graph from an uploaded .gexf ----
 function loadGraph(graph){
   GRAPH = graph;
+  // a new site's category numbers are its own — forget the demo names and any
+  // renames/colours from the previous file
+  builtinData = false;
+  for(const k in labelOverride) delete labelOverride[k];
+  for(const k in colorOverride) delete colorOverride[k];
   buildModel();
   soloKey=null; hidden.clear(); orphanMode=false; hover=null;
   query=""; document.getElementById('search').value="";
@@ -672,11 +682,11 @@ let catFilter="";
 function catList(){
   const cats=new Set();
   N.forEach(n=>{ if(n.cat!=null) cats.add(n.cat); });
-  Object.keys(CATEGORIES).forEach(k=>cats.add(+k));
+  if(builtinData) Object.keys(CATEGORIES).forEach(k=>cats.add(+k));
   Object.keys(labelOverride).forEach(k=>{ if(k.startsWith("cat:")) cats.add(+k.slice(4)); });
   return [...cats].filter(c=>!isNaN(c)).sort((a,b)=>a-b);
 }
-function catName(c){ return labelOverride["cat:"+c] || (CATEGORIES[c]?CATEGORIES[c].name:("Category "+c)); }
+function catName(c){ return labelOverride["cat:"+c] || ((builtinData && CATEGORIES[c]) ? CATEGORIES[c].name : ("Category "+c)); }
 function catOptionsHtml(){
   let html=`<option value="">— Uncategorised —</option>`;
   catList().forEach(c=>{ html+=`<option value="${c}">${escapeHtml(catName(c))}</option>`; });
