@@ -142,7 +142,7 @@
 
 <div class="top">
   <p class="eyebrow">Internal Link Structure</p>
-  <h1>monolithai.com <b>· site graph</b></h1>
+  <h1><span id="hdr-site">monolithai.com</span> <b>· site graph</b></h1>
   <div class="sub" id="hdr-stats">— pages · — internal links</div>
 </div>
 
@@ -619,9 +619,12 @@ buildLegend();
 
 // ---- header stats ----
 const hdrStats=document.getElementById('hdr-stats');
+const hdrSite=document.getElementById('hdr-site');
 function updateStats(){
   const nodeCount=(GRAPH.meta&&GRAPH.meta.nodeCount)||GRAPH.nodes.length;
   const edgeCount=(GRAPH.meta&&GRAPH.meta.edgeCount)||GRAPH.links.length;
+  const site=GRAPH.meta&&GRAPH.meta.site;
+  if(site&&site!=="graph"){ hdrSite.textContent=site; document.title=site+" — internal link map"; }
   hdrStats.textContent =
     `${nodeCount} pages · ${edgeCount.toLocaleString()} internal links · ForceAtlas2 layout`;
 }
@@ -659,6 +662,11 @@ function parseGexf(xmlText){
     const id=a.getAttribute("id"); const title=a.getAttribute("title");
     if(id!=null) attrTitle[id]=(title||id).toLowerCase();
   }
+  // Attribute names vary between exports ("Category", "categories", "ref_domains"…),
+  // so compare on a normalised form: lowercase, no spaces/underscores/hyphens.
+  const normName=(s)=>String(s).toLowerCase().replace(/[\s_-]+/g,"");
+  const isCategoryAttr=(f)=>["category","categories","cat"].includes(f);
+  const isRefAttr=(f)=>["referringdomains","referringdomain","refdomains","refdomain"].includes(f);
   const idToIdx=new Map();
   const nodes=nodeEls.map((el,i)=>{
     const raw=el.getAttribute("id"); idToIdx.set(raw,i);
@@ -667,10 +675,10 @@ function parseGexf(xmlText){
     let cat=null, ref=0;
     for(const av of el.getElementsByTagName("attvalue")){
       const ref0=(av.getAttribute("for")||av.getAttribute("id")||"");
-      const f=(attrTitle[ref0]||ref0).toLowerCase();
+      const f=normName(attrTitle[ref0]||ref0);
       const v=av.getAttribute("value");
-      if(f==="category"){ const c=parseInt(parseFloat(v),10); if(!isNaN(c)) cat=c; }
-      else if(f==="referring domains"){ const r=parseFloat(v); if(!isNaN(r)) ref=r; }
+      if(isCategoryAttr(f)){ const c=parseInt(parseFloat(v),10); if(!isNaN(c)) cat=c; }
+      else if(isRefAttr(f)){ const r=parseFloat(v); if(!isNaN(r)) ref=r; }
     }
     // use the node's own Gephi colour (viz:color) when present, so a new file
     // brings its own palette instead of the built-in one
@@ -701,6 +709,9 @@ function handleFile(file){
     try{
       const graph = nm.endsWith(".json") ? JSON.parse(txt) : parseGexf(txt);
       if(!graph.nodes||!graph.links) throw new Error("unrecognised graph format");
+      // No domain in the file (node ids were bare paths)? Use the file name.
+      graph.meta=graph.meta||{};
+      if(!graph.meta.site||graph.meta.site==="graph") graph.meta.site=file.name.replace(/\.(gexf|xml|json)$/i,"");
       loadGraph(graph);
       loadHint.textContent=`loaded ${graph.nodes.length} pages · ${graph.links.length.toLocaleString()} links`;
     }catch(err){
