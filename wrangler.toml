@@ -2,9 +2,12 @@ name = "gephi-viewer-worker"
 main = "worker/index.js"
 compatibility_date = "2026-07-08"
 
-[[r2_buckets]]
-binding = "GEPHI"
-bucket_name = "gephi-files"
+# R2 is not enabled on this Cloudflare account, and the viewer is hosted on
+# GitHub Pages with drag-and-drop files, so the bucket binding is disabled.
+# Re-enable it (and R2 in the dashboard) to get /api/index and /api/file back.
+# [[r2_buckets]]
+# binding = "GEPHI"
+# bucket_name = "gephi-files"
 
 [ai]
 binding = "AI"

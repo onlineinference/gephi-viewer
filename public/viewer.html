@@ -221,7 +221,8 @@
   // 6) "Ask AI" — build a text digest of the loaded graph and send it, plus the
   //    question, to the Worker's /api/ask (Workers AI). Everything the model sees
   //    is computed here from the real graph, so answers stay grounded.
-  const ASK_URL = params.get("ask") || "/api/ask";
+  // The viewer is hosted on GitHub Pages, so default to the Worker's own domain.
+  const ASK_URL = params.get("ask") || "https://gephi-viewer-worker.dave-9fd.workers.dev/api/ask";
 
   function buildDigest(graph, question) {
     const lines = [];

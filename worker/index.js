@@ -79,6 +79,7 @@ export default {
     }
 
     if (url.pathname === "/api/index") {
+      if (!env.GEPHI) return Response.json([], { headers: CORS_HEADERS });
       const listed = await env.GEPHI.list();
       const files = listed.objects
         .filter((o) => o.key.toLowerCase().endsWith(".gexf"))
@@ -88,6 +89,7 @@ export default {
 
     const fileMatch = url.pathname.match(/^\/api\/file\/(.+)$/);
     if (fileMatch) {
+      if (!env.GEPHI) return new Response("Not found", { status: 404, headers: CORS_HEADERS });
       const key = decodeURIComponent(fileMatch[1]);
       const obj = await env.GEPHI.get(key);
       if (!obj) return new Response("Not found", { status: 404, headers: CORS_HEADERS });
