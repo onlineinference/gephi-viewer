@@ -20,6 +20,19 @@
   #status { font-size: 12px; color: #888; }
   .err { color: #c0392b; }
   select, button { padding: 4px 8px; }
+
+  /* Ask-the-graph chat panel */
+  #main { display: flex; flex: 1; min-height: 0; }
+  #chat { width: 320px; border-left: 1px solid rgba(128,128,128,.3); display: none; flex-direction: column; }
+  #chat.open { display: flex; }
+  #chat-log { flex: 1; overflow-y: auto; padding: 10px; font-size: 13px; }
+  .msg { margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: break-word; }
+  .msg.user { background: rgba(39,65,231,.12); }
+  .msg.assistant { background: rgba(128,128,128,.12); }
+  .msg.pending { color: #888; font-style: italic; }
+  #chat-form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid rgba(128,128,128,.3); }
+  #chat-input { flex: 1; padding: 6px 8px; font-size: 13px; }
+  #chat-empty { color: #888; font-size: 12px; padding: 4px 2px; }
 </style>
 </head>
 <body>
@@ -30,11 +43,23 @@
     <label>Open file: <input id="file" type="file" accept=".gexf,.xml" /></label>
     <select id="remote" title="Files from the bucket" hidden></select>
     <button id="fit">Fit</button>
+    <button id="ask-toggle" title="Ask an AI questions about the loaded graph">Ask AI</button>
     <span class="spacer"></span>
     <span id="status">Drop a .gexf export here (not .gephi — export via File → Export → Graph file)</span>
   </header>
-  <div id="sigma">
-    <div id="drop-hint">Drag &amp; drop a Gephi <b>.gexf</b> export here<br/>— or pick one above —</div>
+  <div id="main">
+    <div id="sigma">
+      <div id="drop-hint">Drag &amp; drop a Gephi <b>.gexf</b> export here<br/>— or pick one above —</div>
+    </div>
+    <aside id="chat">
+      <div id="chat-log">
+        <div id="chat-empty">Ask about the loaded graph — e.g. "which nodes are the biggest hubs?", "what connects to X?", "describe the structure".</div>
+      </div>
+      <form id="chat-form">
+        <input id="chat-input" type="text" placeholder="Ask about this graph…" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </aside>
   </div>
 </div>
 
@@ -60,6 +85,8 @@
   const hint = el("drop-hint");
   const container = el("sigma");
   let renderer = null;
+  let currentGraph = null;
+  let currentGraphLabel = "";
 
   const setStatus = (msg, isErr = false) => { statusEl.textContent = msg; statusEl.className = isErr ? "err" : ""; };
 
@@ -117,6 +144,7 @@
     }
 
     if (renderer) renderer.kill();
+    currentGraph = graph;
     renderer = new Sigma(graph, container, {
       renderLabels: true,
       labelDensity: 0.3,
@@ -139,6 +167,7 @@
   function loadFromText(text, label) {
     try {
       const graph = gexf.parse(Graph, text, { addMissingNodes: true });
+      currentGraphLabel = label || "";
       renderGraph(graph);
       if (label) setStatus(`${label} — ${graph.order} nodes · ${graph.size} edges`);
     } catch (e) {
@@ -188,6 +217,130 @@
       sel.addEventListener("change", () => { if (sel.value) { setStatus("Fetching…"); fetch(sel.value).then((r)=>r.text()).then((t)=>loadFromText(t, sel.value)); } });
     }).catch((e) => console.warn("index load failed", e));
   }
+
+  // 6) "Ask AI" — build a text digest of the loaded graph and send it, plus the
+  //    question, to the Worker's /api/ask (Workers AI). Everything the model sees
+  //    is computed here from the real graph, so answers stay grounded.
+  const ASK_URL = params.get("ask") || "/api/ask";
+
+  function buildDigest(graph, question) {
+    const lines = [];
+    const label = (n) => graph.getNodeAttribute(n, "label") ?? String(n);
+    const directed = graph.type === "directed" || graph.type === "mixed";
+
+    lines.push(`File: ${currentGraphLabel || "(local file)"}`);
+    lines.push(`Type: ${graph.type} · Nodes: ${graph.order} · Edges: ${graph.size}`);
+    if (graph.order > 1) {
+      const density = (2 * graph.size) / (graph.order * (graph.order - 1));
+      lines.push(`Avg degree: ${(2 * graph.size / graph.order).toFixed(2)} · Density: ${density.toFixed(4)}`);
+    }
+
+    // Node attribute keys (sampled) so the model knows what metadata exists.
+    const attrKeys = new Set();
+    let sampled = 0;
+    graph.forEachNode((n, a) => {
+      if (sampled++ < 50) Object.keys(a).forEach((k) => attrKeys.add(k));
+    });
+    lines.push(`Node attributes: ${[...attrKeys].join(", ")}`);
+
+    // Top hubs by degree.
+    const byDegree = graph.nodes()
+      .map((n) => ({ n, d: graph.degree(n) }))
+      .sort((a, b) => b.d - a.d);
+    lines.push("", "Top 25 nodes by degree:");
+    byDegree.slice(0, 25).forEach(({ n, d }) => {
+      const io = directed ? ` (in ${graph.inDegree(n)}, out ${graph.outDegree(n)})` : "";
+      lines.push(`- ${label(n)}: degree ${d}${io}`);
+    });
+
+    // Isolated nodes count.
+    const isolated = byDegree.filter((x) => x.d === 0).length;
+    if (isolated) lines.push(`Isolated nodes (degree 0): ${isolated}`);
+
+    // Nodes whose labels match words from the question, with their neighbors —
+    // this is what lets the model answer "what links to X?".
+    const words = (question.toLowerCase().match(/[a-z0-9][a-z0-9._/-]{2,}/g) || [])
+      .filter((w) => !["the","and","what","which","who","how","are","node","nodes","graph","most","does","with","that","this","about","between","connected","connects","link","links"].includes(w));
+    if (words.length) {
+      const matches = [];
+      for (const n of graph.nodes()) {
+        const l = label(n).toLowerCase();
+        if (words.some((w) => l.includes(w))) {
+          matches.push(n);
+          if (matches.length >= 15) break;
+        }
+      }
+      if (matches.length) {
+        lines.push("", "Nodes matching the question, with neighbors:");
+        for (const n of matches) {
+          const neighbors = graph.neighbors(n).slice(0, 12).map(label).join(", ");
+          const more = graph.degree(n) > 12 ? `, … (${graph.degree(n)} total)` : "";
+          lines.push(`- ${label(n)} (degree ${graph.degree(n)}) -> ${neighbors || "(no neighbors)"}${more}`);
+        }
+      }
+    }
+
+    // If the graph is small, include the full edge list — the model can then
+    // answer path/structure questions exactly.
+    if (graph.size <= 300) {
+      lines.push("", "Full edge list:");
+      graph.forEachEdge((e, attr, s, t) => {
+        lines.push(`${label(s)} ${directed ? "->" : "--"} ${label(t)}`);
+      });
+    }
+
+    return lines.join("\n").slice(0, 15000);
+  }
+
+  const chat = el("chat"), chatLog = el("chat-log"), chatInput = el("chat-input");
+  const chatHistory = [];
+
+  el("ask-toggle").addEventListener("click", () => {
+    chat.classList.toggle("open");
+    if (chat.classList.contains("open")) chatInput.focus();
+    if (renderer) renderer.refresh();
+  });
+
+  function addMsg(role, text, pending = false) {
+    const div = document.createElement("div");
+    div.className = `msg ${role}${pending ? " pending" : ""}`;
+    div.textContent = text;
+    chatLog.appendChild(div);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return div;
+  }
+
+  el("chat-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = chatInput.value.trim();
+    if (!question) return;
+    if (!currentGraph) { addMsg("assistant", "Load a .gexf file first, then ask away."); return; }
+
+    chatInput.value = "";
+    addMsg("user", question);
+    const pendingMsg = addMsg("assistant", "Thinking…", true);
+
+    try {
+      const res = await fetch(ASK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question,
+          digest: buildDigest(currentGraph, question),
+          history: chatHistory.slice(-8),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      pendingMsg.classList.remove("pending");
+      pendingMsg.textContent = data.answer || "(empty answer)";
+      chatHistory.push({ role: "user", content: question }, { role: "assistant", content: data.answer || "" });
+    } catch (err) {
+      pendingMsg.classList.remove("pending");
+      pendingMsg.classList.add("err");
+      pendingMsg.textContent = "Ask failed: " + err.message;
+    }
+  });
 </script>
 </body>
 </html>

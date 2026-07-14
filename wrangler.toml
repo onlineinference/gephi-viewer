@@ -5,3 +5,6 @@ compatibility_date = "2026-07-08"
 [[r2_buckets]]
 binding = "GEPHI"
 bucket_name = "gephi-files"
+
+[ai]
+binding = "AI"
