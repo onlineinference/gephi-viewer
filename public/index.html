@@ -173,6 +173,7 @@
   </div>
   <div class="grp">
     <div class="lbl">Categories</div>
+    <label class="rng" id="catFieldRow" style="display:none"><span>Field</span><select id="catFieldSel" style="flex:1;background:#0b121a;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:4px 6px;font-family:var(--mono);font-size:11px"></select></label>
     <button class="btn" id="editCats">▦  Edit node categories…</button>
     <div class="hint">rename &amp; recolour sections in the legend →</div>
   </div>
@@ -272,7 +273,19 @@ const CATEGORIES = {
 };
 const UNCATEGORISED = {name:"Uncategorised", color:"#8d99ae"};
 const AUTO_COLORS = ["#8cb900","#d97dd8","#23966f","#00c7ff","#ff7045","#f4a259","#a0c4ff","#ff6b6b","#06d6a0","#bdb2ff"];
-function autoColor(c){ return AUTO_COLORS[Math.abs(c|0)%AUTO_COLORS.length]; }
+function autoColor(c){
+  if(typeof c==="number") return AUTO_COLORS[Math.abs(c|0)%AUTO_COLORS.length];
+  let h=7; for(const ch of String(c)) h=(h*31+ch.charCodeAt(0))|0;   // stable colour per name
+  return AUTO_COLORS[Math.abs(h)%AUTO_COLORS.length];
+}
+// Category values can be numbers (1, 2, …) or names ("Blog") depending on the
+// export. Numbers stay numbers; anything else is used verbatim as the name.
+function coerceCat(v){
+  if(v==null) return null;
+  const s=String(v).trim();
+  if(s==="") return null;
+  return /^[+-]?\d*\.?\d+$/.test(s) ? Math.round(parseFloat(s)) : s;
+}
 
 // User edits from the dashboard live here, keyed by a stable group id
 // ("cat:<n>" for a category, "sec:<name>" for a URL-derived section) so a
@@ -287,7 +300,10 @@ function groupKey(n){ return n.cat!=null ? ("cat:"+n.cat) : ("sec:"+deriveSectio
 function groupOf(n){
   const k=groupKey(n);
   if(labelOverride[k]!=null) return labelOverride[k];
-  if(n.cat!=null) return (builtinData && CATEGORIES[n.cat]) ? CATEGORIES[n.cat].name : ("Category "+n.cat);
+  if(n.cat!=null){
+    if(typeof n.cat!=="number") return String(n.cat);               // named category from the file
+    return (builtinData && CATEGORIES[n.cat]) ? CATEGORIES[n.cat].name : ("Category "+n.cat);
+  }
   return deriveSection(n.path);
 }
 function colorOf(n){
@@ -630,6 +646,30 @@ function updateStats(){
 }
 updateStats();
 
+// ---- category field picker ----
+// Lists every node attribute found in the file, so if auto-detection misses
+// (typo'd or unusual column name) the right field can be picked by hand.
+const catFieldRow=document.getElementById('catFieldRow'), catFieldSel=document.getElementById('catFieldSel');
+function populateCatFieldSel(){
+  const fields=(GRAPH.meta&&GRAPH.meta.fields)||{};
+  const keys=Object.keys(fields);
+  if(!keys.length){ catFieldRow.style.display="none"; return; }
+  catFieldSel.innerHTML='<option value="">— none (URL sections) —</option>'
+    + keys.map(k=>`<option value="${escapeHtml(k)}">${escapeHtml(fields[k])}</option>`).join("");
+  catFieldSel.value=(GRAPH.meta.catField&&fields[GRAPH.meta.catField]!=null)?GRAPH.meta.catField:"";
+  catFieldRow.style.display="";
+}
+catFieldSel.addEventListener('change',()=>{
+  const fk=catFieldSel.value||null;
+  GRAPH.meta.catField=fk;
+  // renames/colours applied to the previous field's groups no longer apply
+  for(const k in labelOverride) if(k.startsWith("cat:")) delete labelOverride[k];
+  for(const k in colorOverride) if(k.startsWith("cat:")) delete colorOverride[k];
+  const apply=n=>{ n.cat = fk ? coerceCat(n.attrs&&n.attrs[fk]) : null; };
+  GRAPH.nodes.forEach(apply); N.forEach(apply);
+  refreshGroups(); buildLegend(); syncLegend(); updateStats(); requestDraw();
+});
+
 // ---- load a new graph from an uploaded .gexf ----
 function loadGraph(graph){
   GRAPH = graph;
@@ -644,7 +684,7 @@ function loadGraph(graph){
   tip.style.opacity=0;
   fa2speed=1; fa2speedEff=1; running=true; settle=0;
   didFit=false; frames=0; fitFrame=90;
-  buildLegend(); syncLegend(); updateOrphanBtn(); updateStats(); updSizeHint(); updatePauseBtn(); requestDraw();
+  buildLegend(); syncLegend(); updateOrphanBtn(); updateStats(); updSizeHint(); updatePauseBtn(); populateCatFieldSel(); requestDraw();
 }
 
 // GEXF is XML — parse it natively (no external libs), then map it onto the
@@ -660,34 +700,42 @@ function parseGexf(xmlText){
   const attrTitle={};
   for(const a of doc.getElementsByTagName("attribute")){
     const id=a.getAttribute("id"); const title=a.getAttribute("title");
-    if(id!=null) attrTitle[id]=(title||id).toLowerCase();
+    if(id!=null) attrTitle[id]=title||id;
   }
   // Attribute names vary between exports ("Category", "categories", "ref_domains"…),
   // so compare on a normalised form: lowercase, no spaces/underscores/hyphens.
   const normName=(s)=>String(s).toLowerCase().replace(/[\s_-]+/g,"");
   const isCategoryAttr=(f)=>["category","categories","cat"].includes(f);
   const isRefAttr=(f)=>["referringdomains","referringdomain","refdomains","refdomain"].includes(f);
+  // Every attribute seen in the file, keyed by normalised name, keeping the
+  // original title for display in the "category field" dropdown.
+  const fieldTitles={};
   const idToIdx=new Map();
   const nodes=nodeEls.map((el,i)=>{
     const raw=el.getAttribute("id"); idToIdx.set(raw,i);
     let path=raw, host=""; try{ const u=new URL(raw); path=u.pathname||"/"; host=u.hostname; }catch(_){}
-    // pull the `category` and `referring domains` attributes if present
-    let cat=null, ref=0;
+    // keep ALL attributes so the category field can be switched after loading
+    const attrs={};
     for(const av of el.getElementsByTagName("attvalue")){
       const ref0=(av.getAttribute("for")||av.getAttribute("id")||"");
-      const f=normName(attrTitle[ref0]||ref0);
-      const v=av.getAttribute("value");
-      if(isCategoryAttr(f)){ const c=parseInt(parseFloat(v),10); if(!isNaN(c)) cat=c; }
-      else if(isRefAttr(f)){ const r=parseFloat(v); if(!isNaN(r)) ref=r; }
+      const title=attrTitle[ref0]||ref0;
+      const f=normName(title);
+      if(!(f in fieldTitles)) fieldTitles[f]=title;
+      attrs[f]=av.getAttribute("value");
     }
+    let ref=0;
+    for(const f in attrs){ if(isRefAttr(f)){ const r=parseFloat(attrs[f]); if(!isNaN(r)) ref=r; } }
     // use the node's own Gephi colour (viz:color) when present, so a new file
     // brings its own palette instead of the built-in one
     let color=null;
     const cEl=el.getElementsByTagNameNS("*","color")[0];
     if(cEl){ const r=cEl.getAttribute("r"),g=cEl.getAttribute("g"),b=cEl.getAttribute("b");
       if(r!=null&&g!=null&&b!=null) color=`rgb(${+r},${+g},${+b})`; }
-    return { id:i, path, host, cat, ref, color, inDeg:0, outDeg:0, inW:0 };
+    return { id:i, path, host, cat:null, ref, color, attrs, inDeg:0, outDeg:0, inW:0 };
   });
+  // Default category field: a name variant match if present, else none.
+  const catField=Object.keys(fieldTitles).find(isCategoryAttr)||null;
+  if(catField) nodes.forEach(n=>{ n.cat=coerceCat(n.attrs[catField]); });
   const links=[]; let selfLoops=0;
   for(const el of doc.getElementsByTagName("edge")){
     const s=idToIdx.get(el.getAttribute("source")), t=idToIdx.get(el.getAttribute("target"));
@@ -697,7 +745,8 @@ function parseGexf(xmlText){
     links.push([s,t,w]); nodes[t].inDeg++; nodes[s].outDeg++; nodes[t].inW+=w;
   }
   let site="graph"; try{ site=new URL(nodeEls[0].getAttribute("id")).hostname; }catch(_){}
-  return { nodes, links, meta:{ site, nodeCount:nodes.length, edgeCount:links.length, selfLoops, generated:"from uploaded .gexf" } };
+  return { nodes, links, meta:{ site, nodeCount:nodes.length, edgeCount:links.length, selfLoops,
+    fields:fieldTitles, catField, generated:"from uploaded .gexf" } };
 }
 
 const loadHint=document.getElementById('loadHint');
@@ -729,15 +778,21 @@ addEventListener('drop',e=>{ e.preventDefault(); if(e.dataTransfer.files.length)
 const catBg=document.getElementById('catBg'), catModal=document.getElementById('catModal');
 const catRows=document.getElementById('catRows'), catSearch=document.getElementById('catSearch');
 let catFilter="";
-// the list of categories offered in every dropdown
+// the list of categories offered in every dropdown (numbers first, then names)
 function catList(){
   const cats=new Set();
   N.forEach(n=>{ if(n.cat!=null) cats.add(n.cat); });
   if(builtinData) Object.keys(CATEGORIES).forEach(k=>cats.add(+k));
-  Object.keys(labelOverride).forEach(k=>{ if(k.startsWith("cat:")) cats.add(+k.slice(4)); });
-  return [...cats].filter(c=>!isNaN(c)).sort((a,b)=>a-b);
+  Object.keys(labelOverride).forEach(k=>{ if(k.startsWith("cat:")){ const c=coerceCat(k.slice(4)); if(c!=null) cats.add(c); } });
+  const nums=[...cats].filter(c=>typeof c==="number").sort((a,b)=>a-b);
+  const strs=[...cats].filter(c=>typeof c==="string").sort((a,b)=>a.localeCompare(b));
+  return [...nums,...strs];
 }
-function catName(c){ return labelOverride["cat:"+c] || ((builtinData && CATEGORIES[c]) ? CATEGORIES[c].name : ("Category "+c)); }
+function catName(c){
+  if(labelOverride["cat:"+c]!=null) return labelOverride["cat:"+c];
+  if(typeof c==="string") return c;
+  return (builtinData && CATEGORIES[c]) ? CATEGORIES[c].name : ("Category "+c);
+}
 function catOptionsHtml(){
   let html=`<option value="">— Uncategorised —</option>`;
   catList().forEach(c=>{ html+=`<option value="${c}">${escapeHtml(catName(c))}</option>`; });
@@ -755,7 +810,7 @@ function renderCatTable(){
     const sel=document.createElement('select'); sel.className='catsel'; sel.innerHTML=opts;
     sel.value = n.cat!=null ? String(n.cat) : "";
     sel.onchange=()=>{
-      n.cat = sel.value==="" ? null : parseInt(sel.value,10);
+      n.cat = coerceCat(sel.value);
       if(GRAPH.nodes[n.id]) GRAPH.nodes[n.id].cat = n.cat;   // keep source in sync
       refreshGroups(); buildLegend(); requestDraw();
     };
@@ -776,7 +831,8 @@ catBg.onclick=closeCats;
 catSearch.addEventListener('input',e=>{ catFilter=e.target.value; renderCatTable(); });
 document.getElementById('catAdd').onclick=()=>{
   const name=prompt("Name for the new category:"); if(!name||!name.trim()) return;
-  const nums=catList(); const next=(nums.length?Math.max(...nums):0)+1;
+  const nums=catList().filter(c=>typeof c==="number");
+  const next=(nums.length?Math.max(...nums):0)+1;
   labelOverride["cat:"+next]=name.trim();
   renderCatTable();                     // the new category is now selectable
 };
